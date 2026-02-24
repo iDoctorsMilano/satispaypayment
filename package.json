@@ -1,0 +1,9 @@
+{
+  "name": "satispay-proxy",
+  "version": "1.0.0",
+  "description": "Proxy relay per Satispay API — aggira firewall IONOS",
+  "private": true,
+  "engines": {
+    "node": "18.x"
+  }
+}
