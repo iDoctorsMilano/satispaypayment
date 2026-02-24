@@ -1,10 +1,47 @@
-// api/proxy.js — Vercel Serverless Function (IP hardcoded per ENOTFOUND)
+// api/proxy.js — Vercel Serverless Function
 const https = require('https');
 
-// IP di api.satispay.com per aggirare DNS ENOTFOUND su Vercel
-const SATISPAY_IP = '34.107.141.107';
-
 const PROXY_SECRET = process.env.PROXY_SECRET || '575277e45a420630d45a0f2f20573113e67446ec2c3d0a99312da54ca58cb56c';
+
+// Risolve DNS tramite Google DoH (DNS over HTTPS) per aggirare ENOTFOUND
+async function resolveHost(hostname) {
+    return new Promise((resolve, reject) => {
+        const req = https.request({
+            hostname: '8.8.8.8',
+            path: `/resolve?name=${hostname}&type=A`,
+            method: 'GET',
+            headers: { 'Accept': 'application/dns-json' },
+        }, (res) => {
+            let data = '';
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => {
+                try {
+                    const json = JSON.parse(data);
+                    const answer = (json.Answer || []).find(a => a.type === 1);
+                    if (answer) resolve(answer.data);
+                    else reject(new Error('No A record found for ' + hostname));
+                } catch (e) {
+                    reject(e);
+                }
+            });
+        });
+        req.on('error', reject);
+        req.end();
+    });
+}
+
+function httpsRequest(options, bodyData) {
+    return new Promise((resolve, reject) => {
+        const req = https.request(options, (res) => {
+            let data = '';
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => resolve({ statusCode: res.statusCode, body: data }));
+        });
+        req.on('error', reject);
+        if (bodyData) req.write(bodyData);
+        req.end();
+    });
+}
 
 module.exports = async (req, res) => {
     if (req.method !== 'POST') {
@@ -22,7 +59,6 @@ module.exports = async (req, res) => {
         return res.status(400).json({ error: 'Missing method or endpoint' });
     }
 
-    // Converti array ["Header: value"] in oggetto { Header: value }
     const headersObj = {};
     (headers || []).forEach(h => {
         const idx = h.indexOf(': ');
@@ -33,9 +69,12 @@ module.exports = async (req, res) => {
 
     const bodyData = body || '';
 
-    return new Promise((resolve) => {
-        const options = {
-            host: SATISPAY_IP,
+    try {
+        // Risolvi IP tramite Google DoH
+        const ip = await resolveHost('api.satispay.com');
+
+        const result = await httpsRequest({
+            host: ip,
             port: 443,
             path: endpoint,
             method: method,
@@ -45,27 +84,13 @@ module.exports = async (req, res) => {
                 'Host': 'api.satispay.com',
                 'Content-Length': Buffer.byteLength(bodyData),
             },
-        };
+        }, bodyData);
 
-        const satispayReq = https.request(options, (satispayRes) => {
-            let data = '';
-            satispayRes.on('data', chunk => { data += chunk; });
-            satispayRes.on('end', () => {
-                res.status(satispayRes.statusCode);
-                res.setHeader('Content-Type', 'application/json');
-                res.end(data);
-                resolve();
-            });
-        });
+        res.status(result.statusCode);
+        res.setHeader('Content-Type', 'application/json');
+        res.end(result.body);
 
-        satispayReq.on('error', (err) => {
-            res.status(502).json({ error: 'Proxy error: ' + err.message });
-            resolve();
-        });
-
-        if (bodyData) {
-            satispayReq.write(bodyData);
-        }
-        satispayReq.end();
-    });
+    } catch (err) {
+        res.status(502).json({ error: 'Proxy error: ' + err.message });
+    }
 };
