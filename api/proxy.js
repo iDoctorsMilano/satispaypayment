@@ -1,5 +1,8 @@
-// api/proxy.js — Vercel Serverless Function
+// api/proxy.js — Vercel Serverless Function (IP hardcoded per ENOTFOUND)
 const https = require('https');
+
+// IP di api.satispay.com per aggirare DNS ENOTFOUND su Vercel
+const SATISPAY_IP = '34.107.141.107';
 
 const PROXY_SECRET = process.env.PROXY_SECRET || '575277e45a420630d45a0f2f20573113e67446ec2c3d0a99312da54ca58cb56c';
 
@@ -32,12 +35,14 @@ module.exports = async (req, res) => {
 
     return new Promise((resolve) => {
         const options = {
-            hostname: 'api.satispay.com',
+            host: SATISPAY_IP,
             port: 443,
             path: endpoint,
             method: method,
+            servername: 'api.satispay.com',
             headers: {
                 ...headersObj,
+                'Host': 'api.satispay.com',
                 'Content-Length': Buffer.byteLength(bodyData),
             },
         };
